@@ -4,7 +4,7 @@
 
 vibesTunes bridges the gap between modern self-hosted music streaming on Plex Media Server and the gold standard of offline portable audio: an Apple iPod running Rockbox open-source firmware. Managing a Rockbox-modded iPod no longer requires manual file copying, dealing with fragile FAT32 file naming limits, or converting playlist path formats.
 
-*Note: This application was proudly built with the assistance of Google Gemini.*
+*Note: This application was proudly vibe coded with Google Gemini.*
 
 <p align="center">
   <img src="vibestunes/assets/screenshot.png" alt="vibesTunes Screenshot" width="850">

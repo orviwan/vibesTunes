@@ -181,12 +181,15 @@ class DeviceHeaderWidget(QFrame):
             self.details_label.setText("Filesystem remounted read-write successfully.")
             self.refresh_requested.emit()
         else:
+            repair_hint = (
+                f"To repair filesystem errors, run in terminal:\nsudo fsck.vfat -a {node}"
+                if node
+                else "Please reconnect your iPod or check disk permissions with your system disk utility."
+            )
             QMessageBox.warning(
                 self,
                 "Remount Notice",
-                f"Could not automatically remount read-write: {msg}\n\n"
-                f"To repair filesystem errors, run in terminal:\n"
-                f"sudo fsck.vfat -a {node}"
+                f"Could not automatically remount read-write: {msg}\n\n{repair_hint}"
             )
 
     def _on_eject_clicked(self):

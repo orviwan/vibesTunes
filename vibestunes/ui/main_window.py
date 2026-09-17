@@ -497,7 +497,7 @@ class MainWindow(QMainWindow):
         reply = QMessageBox.question(
             self,
             "Filesystem Read-Only",
-            "The iPod filesystem is currently mounted read-only by Linux.\n\n"
+            "The iPod filesystem is currently mounted read-only by the operating system.\n\n"
             "Would you like vibesTunes to automatically remount it read-write now?",
             QMessageBox.Yes | QMessageBox.No,
             QMessageBox.Yes
@@ -508,12 +508,15 @@ class MainWindow(QMainWindow):
                 self.statusBar().showMessage("iPod remounted read-write successfully.", 6000)
                 self.scan_for_device()
             else:
+                repair_hint = (
+                    f"You can repair filesystem errors in a terminal with:\nsudo fsck.vfat -a {self.device.device_node}"
+                    if self.device.device_node
+                    else "Please reconnect your iPod or verify disk integrity using your system's disk utility."
+                )
                 QMessageBox.warning(
                     self,
                     "Remount Failed",
-                    f"Could not remount read-write: {remount_msg}\n\n"
-                    f"You can repair filesystem errors in a terminal with:\n"
-                    f"sudo fsck.vfat -a {self.device.device_node}"
+                    f"Could not remount read-write: {remount_msg}\n\n{repair_hint}"
                 )
 
     def _start_sync(self, tasks: list):

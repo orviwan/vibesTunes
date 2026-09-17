@@ -3,6 +3,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, List, Optional, Any
@@ -387,9 +388,18 @@ def clean_trash(mount_point: str) -> tuple[bool, int, str]:
         return False, 0, f"Failed to clean trash: {e}"
 
 def open_folder(path: Path) -> None:
-    """Opens folder in Dolphin / default Linux file manager."""
+    """Opens folder in default system file manager (macOS Finder, Windows Explorer, Linux file manager)."""
     try:
-        subprocess.Popen(["xdg-open", str(path)])
+        target = str(path)
+        if sys.platform == "darwin":
+            subprocess.Popen(["open", target])
+        elif sys.platform == "win32":
+            if hasattr(os, "startfile"):
+                os.startfile(target)
+            else:
+                subprocess.Popen(["explorer", target])
+        else:
+            subprocess.Popen(["xdg-open", target])
     except Exception:
         pass
 

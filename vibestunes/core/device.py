@@ -4,6 +4,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Optional, Dict, Any, Set, List
@@ -81,6 +82,9 @@ def get_block_device_for_mount(mount_point: str) -> tuple[str, str, str]:
     dev_node = ""
     disk_node = ""
     fstype = ""
+    if not sys.platform.startswith("linux"):
+        return dev_node, disk_node, fstype
+
     try:
         out = subprocess.check_output(["findmnt", "-n", "-o", "SOURCE,FSTYPE", mount_point], text=True).strip()
         parts = out.split()
@@ -102,9 +106,28 @@ def get_block_device_for_mount(mount_point: str) -> tuple[str, str, str]:
             disk_node = dev_node
     return dev_node, disk_node, fstype
 
+VOLUMES_DIR = Path("/Volumes")
+MEDIA_DIR = Path("/media")
+
 def find_candidate_mounts() -> list[Path]:
     candidates = []
-    # Check /run/media/$USER/*
+
+    # Check macOS /Volumes/*
+    if VOLUMES_DIR.is_dir():
+        try:
+            candidates.extend([d for d in VOLUMES_DIR.iterdir() if d.is_dir()])
+        except Exception:
+            pass
+
+    # Check Windows drive letters (D: through Z:)
+    if sys.platform == "win32":
+        import string
+        for letter in string.ascii_uppercase:
+            drive = Path(f"{letter}:/")
+            if drive.is_dir():
+                candidates.append(drive)
+
+    # Check /run/media/$USER/* (Linux)
     user = os.environ.get("USER", "")
     if user:
         p = Path(f"/run/media/{user}")
@@ -113,19 +136,20 @@ def find_candidate_mounts() -> list[Path]:
                 candidates.extend([d for d in p.iterdir() if d.is_dir()])
             except Exception:
                 pass
-    # Check /media/*
-    p_media = Path("/media")
-    if p_media.is_dir():
+
+    # Check /media/* (Linux)
+    if MEDIA_DIR.is_dir():
         try:
-            candidates.extend([d for d in p_media.iterdir() if d.is_dir()])
+            candidates.extend([d for d in MEDIA_DIR.iterdir() if d.is_dir()])
         except Exception:
             pass
-        if user and (p_media / user).is_dir():
+        if user and (MEDIA_DIR / user).is_dir():
             try:
-                candidates.extend([d for d in (p_media / user).iterdir() if d.is_dir()])
+                candidates.extend([d for d in (MEDIA_DIR / user).iterdir() if d.is_dir()])
             except Exception:
                 pass
-    # Check current mounts from /proc/mounts
+
+    # Check current mounts from /proc/mounts (Linux)
     try:
         with open("/proc/mounts", "r") as f:
             for line in f:
@@ -145,6 +169,9 @@ def auto_mount_unmounted_ipod(ignored_nodes: Optional[Set[str]] = None) -> list[
     (e.g., label 'IPOD' or device model containing 'ipod' or 'iflash'),
     and attempts to mount them via udisksctl. Returns list of newly mounted Paths.
     """
+    if not sys.platform.startswith("linux"):
+        return []
+
     if ignored_nodes is None:
         ignored_nodes = set()
 
@@ -222,13 +249,14 @@ def detect_ipod(
             model_name = get_target_model_name(target)
             dev_node, disk_node, fstype = get_block_device_for_mount(str(m))
 
+            label_name = m.name or m.drive or "IPOD"
             device = iPodDevice(
                 mount_point=str(m),
                 target=target,
                 version=version,
                 memory_mb=memory,
                 model_name=model_name,
-                label=m.name,
+                label=label_name,
                 device_node=dev_node,
                 disk_node=disk_node,
                 filesystem=fstype or "vfat",
@@ -318,35 +346,61 @@ def eject_ipod(device: iPodDevice, step_callback: Optional[Callable[[str], None]
     """
     if step_callback:
         step_callback("Flushing unwritten data to iPod (syncing)...")
-    try:
-        subprocess.run(["sync", "-f", device.mount_point], check=False)
-        subprocess.run(["sync"], check=False)
-    except Exception as e:
-        return False, f"Sync failed: {e}"
 
-    # Unmount partition
+    # Platform-aware sync/flush
+    try:
+        if sys.platform == "darwin":
+            subprocess.run(["sync"], check=False)
+        elif sys.platform.startswith("linux"):
+            subprocess.run(["sync", "-f", device.mount_point], check=False)
+            subprocess.run(["sync"], check=False)
+        elif sys.platform == "win32":
+            pass
+    except Exception:
+        pass
+
+    # Platform-aware unmount
     if step_callback:
         step_callback("Unmounting iPod filesystem...")
-    if device.device_node:
-        res = subprocess.run(["udisksctl", "unmount", "-b", device.device_node, "--no-user-interaction"], capture_output=True, text=True)
-        if res.returncode != 0:
-            # Fallback to standard umount
-            res2 = subprocess.run(["umount", device.mount_point], capture_output=True, text=True)
-            if res2.returncode != 0:
-                return False, f"Could not unmount {device.device_node}: {res.stderr or res2.stderr}"
-    else:
-        res = subprocess.run(["umount", device.mount_point], capture_output=True, text=True)
-        if res.returncode != 0:
-            return False, f"Could not unmount {device.mount_point}: {res.stderr}"
 
-    # Power off block device if available
-    if device.disk_node:
-        if step_callback:
-            step_callback("Powering off USB device safely...")
-        res = subprocess.run(["udisksctl", "power-off", "-b", device.disk_node, "--no-user-interaction"], capture_output=True, text=True)
-        if res.returncode != 0:
-            # power-off might not be critical if unmount succeeded
+    if sys.platform == "darwin":
+        try:
+            res = subprocess.run(["diskutil", "eject", device.mount_point], capture_output=True, text=True)
+            if res.returncode != 0:
+                res2 = subprocess.run(["diskutil", "unmount", device.mount_point], capture_output=True, text=True)
+                if res2.returncode != 0:
+                    return False, f"Could not eject {device.mount_point}: {res.stderr or res2.stderr}"
+        except Exception as e:
+            return False, f"Ejection failed: {e}"
+
+    elif sys.platform == "win32":
+        try:
+            drive_clean = device.mount_point.rstrip("\\/").rstrip(":")
+            if len(drive_clean) == 1 and drive_clean.isalpha():
+                ps_cmd = f"(New-Object -comObject Shell.Application).Namespace(17).ParseName('{drive_clean.upper()}:').InvokeVerb('Eject')"
+                subprocess.run(["powershell", "-NoProfile", "-Command", ps_cmd], capture_output=True, text=True, timeout=6)
+        except Exception:
             pass
+
+    else:
+        # Linux
+        if device.device_node:
+            res = subprocess.run(["udisksctl", "unmount", "-b", device.device_node, "--no-user-interaction"], capture_output=True, text=True)
+            if res.returncode != 0:
+                # Fallback to standard umount
+                res2 = subprocess.run(["umount", device.mount_point], capture_output=True, text=True)
+                if res2.returncode != 0:
+                    return False, f"Could not unmount {device.device_node}: {res.stderr or res2.stderr}"
+        else:
+            res = subprocess.run(["umount", device.mount_point], capture_output=True, text=True)
+            if res.returncode != 0:
+                return False, f"Could not unmount {device.mount_point}: {res.stderr}"
+
+        # Power off block device if available
+        if device.disk_node:
+            if step_callback:
+                step_callback("Powering off USB device safely...")
+            subprocess.run(["udisksctl", "power-off", "-b", device.disk_node, "--no-user-interaction"], capture_output=True, text=True)
 
     if step_callback:
         step_callback("Safe to disconnect your iPod!")
@@ -356,13 +410,14 @@ def is_mount_readonly(mount_point: str) -> bool:
     """Checks if the mount point is mounted read-only (either by mount options or write probe)."""
     if not mount_point:
         return False
-    try:
-        out = subprocess.check_output(["findmnt", "-n", "-o", "OPTIONS", mount_point], text=True).strip()
-        opts = [o.strip() for o in out.split(",")]
-        if "ro" in opts:
-            return True
-    except Exception:
-        pass
+    if sys.platform.startswith("linux"):
+        try:
+            out = subprocess.check_output(["findmnt", "-n", "-o", "OPTIONS", mount_point], text=True).strip()
+            opts = [o.strip() for o in out.split(",")]
+            if "ro" in opts:
+                return True
+        except Exception:
+            pass
 
     # Active write test probe
     test_file = Path(mount_point) / ".vibestunes_rw_probe"
@@ -372,7 +427,7 @@ def is_mount_readonly(mount_point: str) -> bool:
         test_file.unlink(missing_ok=True)
         return False
     except OSError as e:
-        if e.errno == 30:  # EROFS Read-only file system
+        if e.errno in (30, 13):  # EROFS Read-only file system or EACCES Permission denied
             return True
     except Exception:
         pass
@@ -380,11 +435,13 @@ def is_mount_readonly(mount_point: str) -> bool:
 
 def remount_rw(device_node: str, mount_point: Optional[str] = None) -> tuple[bool, str]:
     """
-    Attempts to remount a partition read-write via udisksctl.
+    Attempts to remount a partition read-write via udisksctl (Linux).
     Returns (success, message).
     """
     if not device_node:
         return False, "No device node available for remount."
+    if not sys.platform.startswith("linux"):
+        return False, "Automatic remount is only supported on Linux. Please check disk permissions or reconnect the device."
     try:
         subprocess.run(["udisksctl", "unmount", "-b", device_node, "--no-user-interaction"], capture_output=True, text=True, timeout=5)
         res = subprocess.run(["udisksctl", "mount", "-b", device_node, "--no-user-interaction"], capture_output=True, text=True, timeout=5)

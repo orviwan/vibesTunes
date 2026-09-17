@@ -26,14 +26,39 @@ vibesTunes bridges the gap between modern self-hosted music streaming on Plex Me
 
 ---
 
-## Installation
+## Installation & Running
 
-vibesTunes is a Linux desktop application built with PySide6 (Qt6) and Python 3.10+. Run it quickly using `uv`:
+vibesTunes is a cross-platform desktop application for **macOS**, **Windows**, and **Linux** built with PySide6 (Qt6) and Python 3.10+.
+
+### Recommended: Using `uv` (All Platforms)
+
+[`uv`](https://github.com/astral-sh/uv) provides the fastest, zero-config way to run vibesTunes across macOS, Windows, and Linux:
 
 ```bash
 git clone https://github.com/orviwan/vibesTunes.git
 cd vibesTunes
 uv run vibesTunes
+```
+
+### Alternative: Standard Python & Virtual Environment
+
+You can also run vibesTunes using standard Python 3.10+:
+
+```bash
+git clone https://github.com/orviwan/vibesTunes.git
+cd vibesTunes
+
+# Create and activate virtual environment
+python3 -m venv .venv
+
+# macOS / Linux:
+source .venv/bin/activate
+# Windows (Command Prompt / PowerShell):
+# .venv\Scripts\activate
+
+# Install and run
+pip install .
+vibesTunes
 ```
 
 ### CLI Flags
@@ -49,9 +74,20 @@ uv run vibesTunes --fullscreen
 uv run vibesTunes --demo --fullscreen
 ```
 
-### Desktop Launcher Integration
+---
 
-To add vibesTunes to your system application menu (KDE Plasma, GNOME Dash, Rofi, etc.):
+## Device & Platform Support
+
+vibesTunes automatically detects your Rockbox iPod when plugged in via USB:
+
+* **macOS:** Automatically detects iPod volumes mounted under `/Volumes/<LABEL>` (e.g., `/Volumes/IPOD`). Cleanly unmounts via `diskutil`.
+* **Windows:** Automatically scans and detects iPod drive letters (e.g., `D:\`, `E:\`).
+* **Linux:** Automatically detects iPods under `/run/media/$USER/<LABEL>` or `/media/<LABEL>`, and auto-mounts unmounted iPod partitions via `udisksctl`.
+* **Custom Mount:** On any operating system, you can also select or browse to any custom folder/mount point in **Settings**.
+
+### Optional: Linux Desktop Launcher Integration
+
+To add vibesTunes to your Linux system application menu (KDE Plasma, GNOME Dash, Rofi, etc.):
 
 ```bash
 cp vibestunes/assets/vibesTunes.svg ~/.local/share/icons/hicolor/scalable/apps/vibesTunes.svg

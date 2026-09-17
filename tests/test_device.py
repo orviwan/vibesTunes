@@ -106,3 +106,89 @@ def test_auto_mount_unmounted_ipod(monkeypatch):
         assert len(mounted) == 1
         assert str(mounted[0]) == fake_mp
         assert any("udisksctl" in c and "/dev/sda1" in c for c in commands_executed)
+
+def test_find_candidate_mounts_cross_platform(monkeypatch):
+    import sys
+    import vibestunes.core.device as dev_mod
+    from vibestunes.core.device import find_candidate_mounts
+
+    # Test macOS /Volumes
+    with tempfile.TemporaryDirectory() as fake_volumes:
+        vol_ipod = Path(fake_volumes) / "IPOD"
+        vol_ipod.mkdir()
+        monkeypatch.setattr(dev_mod, "VOLUMES_DIR", Path(fake_volumes))
+
+        candidates = find_candidate_mounts()
+        assert vol_ipod in candidates
+
+    # Test Windows drive letters
+    monkeypatch.setattr(sys, "platform", "win32")
+    with tempfile.TemporaryDirectory() as fake_drive:
+        fake_drive_path = Path(fake_drive)
+        # Mock Path so that 'E:/' returns fake_drive_path
+        orig_path = dev_mod.Path
+        def mock_path(p):
+            if str(p).startswith("E:"):
+                return fake_drive_path
+            return orig_path(p)
+
+        monkeypatch.setattr(dev_mod, "Path", mock_path)
+        candidates = find_candidate_mounts()
+        assert fake_drive_path in candidates
+
+def test_eject_ipod_cross_platform(monkeypatch):
+    import sys
+    from vibestunes.core.device import iPodDevice, eject_ipod
+
+    executed = []
+    def mock_run(cmd, capture_output=True, text=True, check=False, timeout=None):
+        executed.append(cmd)
+        class MockRes:
+            returncode = 0
+            stdout = ""
+            stderr = ""
+        return MockRes()
+
+    monkeypatch.setattr("subprocess.run", mock_run)
+
+    # macOS eject
+    monkeypatch.setattr(sys, "platform", "darwin")
+    dev_mac = iPodDevice(mount_point="/Volumes/IPOD")
+    ok, msg = eject_ipod(dev_mac)
+    assert ok is True
+    assert any("diskutil" in cmd and "eject" in cmd and "/Volumes/IPOD" in cmd for cmd in executed)
+
+    # Windows eject
+    executed.clear()
+    monkeypatch.setattr(sys, "platform", "win32")
+    dev_win = iPodDevice(mount_point="E:\\")
+    ok, msg = eject_ipod(dev_win)
+    assert ok is True
+    assert any("powershell" in cmd and "Eject" in cmd[3] for cmd in executed)
+
+def test_open_folder_cross_platform(monkeypatch):
+    import sys
+    from vibestunes.core.ipod_scanner import open_folder
+
+    opened_cmds = []
+    def mock_popen(cmd):
+        opened_cmds.append(cmd)
+
+    monkeypatch.setattr("subprocess.Popen", mock_popen)
+
+    # Test macOS
+    monkeypatch.setattr(sys, "platform", "darwin")
+    open_folder(Path("/Volumes/IPOD/Music"))
+    assert opened_cmds[-1] == ["open", "/Volumes/IPOD/Music"]
+
+    # Test Linux
+    monkeypatch.setattr(sys, "platform", "linux")
+    open_folder(Path("/media/IPOD/Music"))
+    assert opened_cmds[-1] == ["xdg-open", "/media/IPOD/Music"]
+
+    # Test Windows with startfile
+    monkeypatch.setattr(sys, "platform", "win32")
+    startfile_targets = []
+    monkeypatch.setattr("os.startfile", lambda p: startfile_targets.append(p), raising=False)
+    open_folder(Path("E:/Music"))
+    assert startfile_targets[-1] == "E:/Music"
